@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Flight Simulator V13 - Sky Fortress Edition</title>
+    <title>Ultimate Flight Simulator V14 - Sky Fortress Edition</title>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; overflow: hidden; background-color: #7ec0ee; font-family: 'Segoe UI', Tahoma, sans-serif; color: white; user-select: none; touch-action: none; }
@@ -224,12 +224,13 @@
 <body>
 
     <div id="three-canvas-container"></div>
-    <div id="audio-hint">Tippe auf den Bildschirm für Ton 🔊</div>
+    <div id="audio-hint">🔊 Tippe irgendwo für Ton</div>
+    <div id="sound-indicator" style="position:absolute; top:5px; right:200px; color:#00ffcc; font-size:11px; font-weight:bold; text-shadow:1px 1px 2px #000; z-index:10; display:none;">🔇 SOUND OFF</div>
 
     <div id="start-menu">
-        <h1>ULTIMATE FLIGHT SIM V13</h1>
+        <h1>ULTIMATE FLIGHT SIM V14</h1>
         <h2>SKY FORTRESS EDITION</h2>
-        <p>V13: Fahrwerk endlich einfahrbar (mit Türen + Geräusch)! 10+ neue Sounds (Gear, Klappen, Reifenquietschen, Stall-Horn, GPWS, Tankwarnung). Kraftstoffsystem mit Tanken an Flughäfen. Erweiterte Map: 4 Flughäfen, Flugzeugträger, Vulkan mit Rauch, Inseln mit Palmen, Windkraftanlagen, Leuchttürme mit rotierendem Licht, Stromleitungen, Brücken. ATC-Wegpunkte + vieles mehr!</p>
+        <p>V14: Unendlich Treibstoff (reiner Flugsimulator). Ringe entfernt (kein Spielmodus). Audio zuverlässig fixiert (mehrere Gesten-Listener, Sound-Indicator). Bessere Physik: koordinierte Kurven, Ground Effect, induzierter Widerstand, Prop-Torque, Trim, sanfterer Stall. Bessere Grafik: ACES Tone Mapping, Gradient-Sky-Shader, Hemisphere-Light, höhere Schattenauflösung, Sun-Glow-Sprite.</p>
         <div class="plane-grid">
             <button class="plane-btn" onclick="startGame('CESSNA')">🛩️ Cessna 172<small>Leicht · Trainer · Stall 45kt</small></button>
             <button class="plane-btn" onclick="startGame('A320')">✈️ Airbus A320neo<small>Verkehrs · Stall 120kt</small></button>
@@ -269,7 +270,6 @@
             <div><span class="lbl">MAX SPD</span> <span id="ui-maxspd">0</span> kt</div>
             <div><span class="lbl">MAX ALT</span> <span id="ui-maxalt">0</span> ft</div>
             <div><span class="lbl">LANDINGS</span> <span id="ui-landings">0</span></div>
-            <div><span class="lbl">RINGS</span> <span id="ui-rings">0</span></div>
         </div>
 
         <div id="heading-strip"><canvas id="heading-canvas" width="640" height="72"></canvas></div>
@@ -323,7 +323,6 @@
 
     <div id="landing-toast">SMOOTH LANDING! +1</div>
     <div id="achievement-toast"><span class="ach-title">ACHIEVEMENT</span><span id="ach-text"></span></div>
-    <div id="ring-toast">🎯 RING! +100</div>
 
     <div id="pause-menu">
         <h2>PAUSE</h2>
@@ -556,32 +555,50 @@
 
         // --- Audio System ---
         function initAudio() {
-            if(audioCtx && audioCtx.state === 'running') return;
-            const AudioContext = window.AudioContext || window.webkitAudioContext;
-            if(!audioCtx) {
-                audioCtx = new AudioContext();
-                masterGain = audioCtx.createGain();
-                masterGain.gain.value = masterVolume;
-                masterGain.connect(audioCtx.destination);
-            }
-            if(audioCtx.state === 'suspended') audioCtx.resume().then(() => { const h=document.getElementById('audio-hint'); if(h) h.style.display='none'; });
-            if(engineOsc) return;
-            engineOsc = audioCtx.createOscillator(); engineOsc.type = 'sawtooth';
-            engineGain = audioCtx.createGain();
-            engineOsc.connect(engineGain); engineGain.connect(masterGain);
-            engineOsc.start(); engineGain.gain.value = 0;
-            const bufferSize = audioCtx.sampleRate * 2; const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
-            const data = buffer.getChannelData(0); for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
-            windNoise = audioCtx.createBufferSource(); windNoise.buffer = buffer; windNoise.loop = true;
-            windFilter = audioCtx.createBiquadFilter(); windFilter.type = 'lowpass'; windFilter.frequency.value = 100;
-            windGain = audioCtx.createGain(); windGain.gain.value = 0;
-            windNoise.connect(windFilter); windFilter.connect(windGain); windGain.connect(masterGain);
-            windNoise.start();
+            try {
+                const AudioContext = window.AudioContext || window.webkitAudioContext;
+                if(!audioCtx) {
+                    audioCtx = new AudioContext();
+                    masterGain = audioCtx.createGain();
+                    masterGain.gain.value = masterVolume;
+                    masterGain.connect(audioCtx.destination);
+                }
+                // Always try to resume (browsers suspend until user gesture)
+                if(audioCtx.state === 'suspended') {
+                    audioCtx.resume().then(() => {
+                        const h=document.getElementById('audio-hint'); if(h) h.style.display='none';
+                        const si=document.getElementById('sound-indicator'); if(si) si.innerText = '🔊 SOUND ON';
+                    }).catch(()=>{});
+                }
+                if(audioCtx.state === 'running') {
+                    const h=document.getElementById('audio-hint'); if(h) h.style.display='none';
+                    const si=document.getElementById('sound-indicator'); if(si) si.innerText = '🔊 SOUND ON';
+                }
+                if(engineOsc) return;
+                engineOsc = audioCtx.createOscillator(); engineOsc.type = 'sawtooth';
+                engineGain = audioCtx.createGain();
+                engineOsc.connect(engineGain); engineGain.connect(masterGain);
+                engineOsc.start(); engineGain.gain.value = 0;
+                const bufferSize = audioCtx.sampleRate * 2; const buffer = audioCtx.createBuffer(1, bufferSize, audioCtx.sampleRate);
+                const data = buffer.getChannelData(0); for (let i = 0; i < bufferSize; i++) data[i] = Math.random() * 2 - 1;
+                windNoise = audioCtx.createBufferSource(); windNoise.buffer = buffer; windNoise.loop = true;
+                windFilter = audioCtx.createBiquadFilter(); windFilter.type = 'lowpass'; windFilter.frequency.value = 100;
+                windGain = audioCtx.createGain(); windGain.gain.value = 0;
+                windNoise.connect(windFilter); windFilter.connect(windGain); windGain.connect(masterGain);
+                windNoise.start();
+            } catch(e) { console.warn('Audio init failed:', e); }
         }
+        // Multiple gesture types to ensure audio unlocks on any platform
         document.body.addEventListener('click', initAudio, {passive: true});
         document.body.addEventListener('touchstart', initAudio, {passive: true});
+        document.body.addEventListener('keydown', initAudio, {passive: true});
+        document.addEventListener('pointerdown', initAudio, {passive: true});
+        // Resume on visibility change (tab refocus)
+        document.addEventListener('visibilitychange', () => { if(!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
 
         function playSound(type) {
+            if(!audioCtx) { initAudio(); }
+            if(audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
             if(!audioCtx || audioCtx.state !== 'running') return;
             const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(masterGain);
@@ -796,6 +813,49 @@
             if(engineGain) engineGain.gain.value = 0; if(windGain) windGain.gain.value = 0;
         }
 
+        // --- Sky Dome: gradient sphere (zenith blue → horizon light) ---
+        let skyDome = null;
+        function createSkyDome() {
+            const skyGeo = new THREE.SphereGeometry(30000, 32, 16);
+            const skyMat = new THREE.ShaderMaterial({
+                side: THREE.BackSide,
+                fog: false,
+                uniforms: {
+                    topColor: { value: new THREE.Color(0x2a6cc4) },
+                    bottomColor: { value: new THREE.Color(0xb8d8f0) },
+                    offset: { value: 1000 },
+                    exponent: { value: 0.7 }
+                },
+                vertexShader: `
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        vec4 worldPosition = modelMatrix * vec4(position, 1.0);
+                        vWorldPosition = worldPosition.xyz;
+                        gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+                    }
+                `,
+                fragmentShader: `
+                    uniform vec3 topColor;
+                    uniform vec3 bottomColor;
+                    uniform float offset;
+                    uniform float exponent;
+                    varying vec3 vWorldPosition;
+                    void main() {
+                        float h = normalize(vWorldPosition + offset).y;
+                        float t = max(pow(max(h, 0.0), exponent), 0.0);
+                        gl_FragColor = vec4(mix(bottomColor, topColor, t), 1.0);
+                    }
+                `
+            });
+            skyDome = new THREE.Mesh(skyGeo, skyMat);
+            scene.add(skyDome);
+        }
+        function setSkyColors(top, bottom) {
+            if(!skyDome) return;
+            skyDome.material.uniforms.topColor.value.setHex(top);
+            skyDome.material.uniforms.bottomColor.value.setHex(bottom);
+        }
+
         // --- 3D World ---
         function init3D() {
             scene = new THREE.Scene();
@@ -805,21 +865,37 @@
             camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 40000);
             renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
+            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
             renderer.shadowMap.enabled = true;
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            // ACES Filmic tone mapping for cinematic color grading
+            renderer.toneMapping = THREE.ACESFilmicToneMapping;
+            renderer.toneMappingExposure = 1.0;
+            renderer.outputEncoding = THREE.sRGBEncoding;
             document.getElementById('three-canvas-container').appendChild(renderer.domElement);
 
-            ambientLight = new THREE.AmbientLight(0xffffff, 0.6); scene.add(ambientLight);
-            sunLight = new THREE.DirectionalLight(0xffeedd, 1.2);
+            // Sky gradient dome (better than flat color)
+            createSkyDome();
+
+            // Hemisphere light: natural sky-ground bounce (much more realistic than flat ambient)
+            const hemiLight = new THREE.HemisphereLight(0x9ec8ee, 0x4a5a3a, 0.6);
+            scene.add(hemiLight);
+            ambientLight = new THREE.AmbientLight(0xffffff, 0.25); scene.add(ambientLight);
+            sunLight = new THREE.DirectionalLight(0xfff4e0, 1.4);
             sunLight.position.set(2000, 3000, 2000); sunLight.castShadow = true;
             sunLight.shadow.camera.left = -5000; sunLight.shadow.camera.right = 5000;
             sunLight.shadow.camera.top = 5000; sunLight.shadow.camera.bottom = -5000;
-            sunLight.shadow.mapSize.width = 2048; sunLight.shadow.mapSize.height = 2048;
+            sunLight.shadow.camera.near = 100; sunLight.shadow.camera.far = 10000;
+            sunLight.shadow.mapSize.width = 4096; sunLight.shadow.mapSize.height = 4096;
+            sunLight.shadow.bias = -0.0005;
             scene.add(sunLight);
             moonLight = new THREE.DirectionalLight(0x6688aa, 0.0); moonLight.position.set(-3000, 4000, -2000); scene.add(moonLight);
 
             sunMesh = new THREE.Mesh(new THREE.SphereGeometry(300, 24, 24), new THREE.MeshBasicMaterial({color: 0xffffaa, fog:false}));
             sunMesh.position.set(8000, 6000, 8000); scene.add(sunMesh);
+            // Sun glow sprite
+            const glowMat = new THREE.SpriteMaterial({color: 0xffffaa, transparent: true, opacity: 0.3, fog: false, blending: THREE.AdditiveBlending});
+            const sunGlow = new THREE.Sprite(glowMat); sunGlow.scale.set(2000, 2000, 1); sunGlow.position.copy(sunMesh.position); scene.add(sunGlow);
             moonMesh = new THREE.Mesh(new THREE.SphereGeometry(180, 24, 24), new THREE.MeshBasicMaterial({color: 0xdddddd, fog:false}));
             moonMesh.position.set(-8000, 6000, -8000); scene.add(moonMesh);
 
@@ -1323,16 +1399,8 @@
         }
 
         function createRings() {
-            const ringMat = new THREE.MeshBasicMaterial({color: 0x00ffff, transparent: true, opacity: 0.7});
-            for(let i=0; i<10; i++) {
-                const ring = new THREE.Mesh(new THREE.TorusGeometry(40, 4, 8, 24), ringMat.clone());
-                const angle = (i / 10) * Math.PI * 2;
-                const dist = 1500 + Math.random()*4000;
-                ring.position.set(Math.cos(angle)*dist, 800 + Math.random()*1500, Math.sin(angle)*dist);
-                ring.rotation.y = angle + Math.PI/2;
-                ring.userData.passed = false;
-                scene.add(ring); rings.push(ring);
-            }
+            // Rings removed in V14 — this is a flight simulator, not a flying game.
+            // Kept as no-op for backward-compat with init3D call.
         }
 
         function spawnTraffic() {
@@ -1818,6 +1886,7 @@
             isNight = !isNight;
             if(isNight) {
                 scene.background.setHex(0x050510); scene.fog.color.setHex(0x050510);
+                setSkyColors(0x000510, 0x1a1a2e);
                 sunLight.intensity = 0.05; ambientLight.intensity = 0.12; moonLight.intensity = 0.4;
                 document.getElementById('time-btn').innerText = 'DAY';
                 document.getElementById('time-btn').style.background = 'rgba(200, 150, 0, 0.7)';
@@ -1829,7 +1898,8 @@
                 if(!achievements.nightFlight) { achievements.nightFlight = true; showAchievement('Nachtflugmeister'); }
             } else {
                 scene.background.setHex(0x6eb8e6); scene.fog.color.setHex(0x8bc9ee);
-                sunLight.intensity = 1.2; ambientLight.intensity = 0.5; moonLight.intensity = 0;
+                setSkyColors(0x2a6cc4, 0xb8d8f0);
+                sunLight.intensity = 1.4; ambientLight.intensity = 0.25; moonLight.intensity = 0;
                 document.getElementById('time-btn').innerText = 'NIGHT';
                 document.getElementById('time-btn').style.background = 'rgba(50, 50, 150, 0.7)';
                 buildings.forEach(b => { if(!b.isDestroyed) b.meshes.forEach(m => { if(m.userData.isWindowed) m.material = matGlas; }); });
@@ -1953,7 +2023,15 @@
             const MAX_PITCH = THREE.MathUtils.degToRad(currentPlane === 'F22' ? 40 : (currentPlane === 'HELO' ? 30 : 20));
             physics.targetPitchRate = touchPitchInput * MAX_PITCH;
             physics.pitch += (physics.targetPitchRate - physics.pitch) * dt * stats.maneuver * 3;
-            physics.yaw += Math.sin(physics.roll) * dt * 0.8 + physics.rudder * dt * (currentPlane === 'HELO' ? 1.5 : 0.3);
+            // Coordinated turn: yaw follows bank naturally (turning yields yaw via horizontal lift component)
+            // Plus rudder input for coordination / crosswind crab
+            const turnYaw = Math.sin(physics.roll) * dt * 0.8 * (physics.speed / 200);
+            const propTorque = (currentPlane === 'CESSNA') ? -0.02 * dt * (physics.thrust / 100) : 0; // P-factor for single-prop
+            physics.yaw += turnYaw + physics.rudder * dt * (currentPlane === 'HELO' ? 1.5 : 0.4) + propTorque;
+            // Slight trim: auto-level roll when no input (realistic stability)
+            if(Math.abs(touchRollInput) < 0.05 && !physics.onGround) {
+                physics.roll += (0 - physics.roll) * dt * 0.3;
+            }
 
             const flapDeg = stats.flapSteps[physics.flapIndex];
             const flapLiftMult = 1 + flapDeg * 0.025;
@@ -1982,22 +2060,9 @@
                 let climbDecel = gravityForce * Math.sin(Math.max(0, physics.pitch));
                 let thrustSign = (physics.reverseThrust && physics.speed > 0) ? -1 : 1;
                 let thrustAccel = thrustSign * (physics.thrust / 100) * stats.accelMult;
-                // Fuel consumption
-                if(physics.engineOn && physics.fuel > 0) {
-                    physics.fuel -= (physics.thrust / 100) * dt * 0.4 * (currentPlane === 'F22' ? 1.5 : (currentPlane === 'CONCORDE' ? 1.3 : 1.0));
-                    if(physics.fuel < 0) physics.fuel = 0;
-                }
-                if(physics.fuel <= 0 && physics.engineOn) {
-                    physics.engineOn = false; physics.thrust = 0;
-                    document.getElementById('throttle-knob').style.bottom = '0%';
-                }
-                // Refuel at airport when stopped
-                if(physics.onGround && onRWY && physics.speed < 5) {
-                    physics.fuel = Math.min(physics.fuelCapacity, physics.fuel + dt * 8);
-                    if(!physics.engineOn && physics.fuel > 5) physics.engineOn = true;
-                }
-                // If engine off, no thrust
-                if(!physics.engineOn) thrustAccel = 0;
+                // Infinite fuel — flugsimulator mode, no fuel management
+                physics.fuel = physics.fuelCapacity;
+                physics.engineOn = true;
                 let dragAccel = (physics.speed * physics.speed * (stats.dragCoef + flapDragAdd)) + (gearDeployed ? physics.speed * stats.gearDrag : 0) + (physics.spoilers ? physics.speed * physics.speed * 0.00012 : 0);
                 if (physics.position.y <= groundY + 1.8) {
                     physics.onGround = true;
@@ -2014,13 +2079,24 @@
                 }
                 let lift = physics.speed * physics.speed * stats.liftCoef * flapLiftMult * Math.cos(physics.roll);
                 lift *= (1 + Math.max(0, physics.pitch) * 3.0);
+                // Ground effect: extra lift when close to ground (within ~1 wingspan)
+                const agl = physics.position.y - groundY;
+                if(agl < 30 && agl > 0) {
+                    const groundEffectMult = 1 + (1 - agl/30) * 0.4; // up to +40% lift very close
+                    lift *= groundEffectMult;
+                }
                 vertAccel = (lift - gravityForce) / stats.weight;
+                // Induced drag: more drag when producing more lift (realistic)
+                const inducedDrag = (lift * lift) / (physics.speed * physics.speed + 1) * 0.0000015;
+                dragAccel += inducedDrag;
+                // Crosswind: storm weather pushes plane sideways
                 if(weatherMode === 3 && !physics.onGround) { vertAccel += (Math.random()-0.5) * 8; physics.roll += (Math.random()-0.5) * 0.05; physics.yaw += (Math.random()-0.5) * 0.03; }
+                // Stall: mush behavior (gradual sink, not instant drop)
                 if (physics.speed < stats.stall && physics.position.y > groundY + 10) {
                     document.getElementById('stall-warning').style.display = 'block';
                     stallHornTimer -= dt;
                     if(stallHornTimer <= 0) { playSound('stallhorn'); stallHornTimer = 0.5; }
-                    physics.pitch -= THREE.MathUtils.degToRad(15) * dt; vertAccel -= 20;
+                    physics.pitch -= THREE.MathUtils.degToRad(8) * dt; vertAccel -= 12;
                 } else { document.getElementById('stall-warning').style.display = 'none'; stallHornTimer = 0; }
                 if(physics.speed > stats.maxSpeed) {
                     document.getElementById('overspeed-warning').style.display = 'block';
@@ -2116,18 +2192,7 @@
             if(physics.speed > score.maxSpeed) score.maxSpeed = physics.speed;
             if(physics.position.y * 3.28 > score.maxAlt) score.maxAlt = physics.position.y * 3.28;
 
-            // Ring check
-            rings.forEach(ring => {
-                if(ring.userData.passed) return;
-                const d = ring.position.distanceTo(physics.position);
-                if(d < 45) {
-                    ring.userData.passed = true;
-                    ring.material.color.setHex(0x00ff00);
-                    score.rings++;
-                    showRingToast();
-                    if(score.rings >= 5 && !achievements.ringMaster) { achievements.ringMaster = true; showAchievement('Ring-Meister!'); }
-                }
-            });
+            // (Rings removed in V14 — flight simulator, not flying game)
 
             // Smoke trail
             if(smokeOn && !isCrashed) {
@@ -2274,7 +2339,6 @@
                 <div><span class="lbl">Max Speed</span>     ${Math.round(score.maxSpeed)} kt</div>
                 <div><span class="lbl">Max Höhe</span>      ${Math.round(score.maxAlt)} ft</div>
                 <div><span class="lbl">Landungen</span>     ${score.landings}</div>
-                <div><span class="lbl">Ringe</span>         ${score.rings}</div>
             `;
             document.getElementById('crash-screen').style.display = 'flex';
             document.getElementById('stall-warning').style.display = 'none';
@@ -2346,7 +2410,7 @@
             airports.forEach(a => { const ax = a.x*scale - physics.position.x*scale; const az = a.z*scale - physics.position.z*scale; if(Math.abs(ax)<75 && Math.abs(az)<75) mCtx.fillRect(ax-3, az-3, 6, 6); });
             // Rings on minimap
             mCtx.fillStyle = '#0ff';
-            rings.forEach(r => { if(r.userData.passed) return; const rx = r.position.x*scale - physics.position.x*scale; const rz = r.position.z*scale - physics.position.z*scale; if(Math.abs(rx)<75 && Math.abs(rz)<75) { mCtx.beginPath(); mCtx.arc(rx, rz, 3, 0, Math.PI*2); mCtx.fill(); } });
+            // (Rings removed — no minimap markers)
             // Balloons
             mCtx.fillStyle = '#f6c';
             balloons.forEach(b => { const bx = b.position.x*scale - physics.position.x*scale; const bz = b.position.z*scale - physics.position.z*scale; if(Math.abs(bx)<75 && Math.abs(bz)<75) mCtx.fillRect(bx-1, bz-1, 2, 2); });
@@ -2477,7 +2541,6 @@
                     document.getElementById('ui-maxspd').innerText = Math.round(score.maxSpeed);
                     document.getElementById('ui-maxalt').innerText = Math.round(score.maxAlt);
                     document.getElementById('ui-landings').innerText = score.landings;
-                    document.getElementById('ui-rings').innerText = score.rings;
                     drawHUDs();
                     updateWeather(dt);
                 }
@@ -2520,7 +2583,7 @@
                     if(b.userData.burner) b.userData.burner.intensity = isNight ? 1 + Math.sin(b.userData.phase*4)*0.5 : 0;
                 });
                 // Rings rotation
-                rings.forEach(r => { r.rotation.z += dt * 0.5; });
+                // (Rings rotation removed)
                 // Waypoint rotation + pulsing
                 waypoints.forEach((wp, i) => { wp.mesh.rotation.z += dt * 0.3; wp.mesh.scale.setScalar(1 + Math.sin(performance.now()/500 + i) * 0.1); });
 
