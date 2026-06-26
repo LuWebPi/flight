@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Flight Simulator V12 - Sky Fortress Edition</title>
+    <title>Ultimate Flight Simulator V13 - Sky Fortress Edition</title>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; overflow: hidden; background-color: #7ec0ee; font-family: 'Segoe UI', Tahoma, sans-serif; color: white; user-select: none; touch-action: none; }
@@ -227,9 +227,9 @@
     <div id="audio-hint">Tippe auf den Bildschirm für Ton 🔊</div>
 
     <div id="start-menu">
-        <h1>ULTIMATE FLIGHT SIM V12</h1>
+        <h1>ULTIMATE FLIGHT SIM V13</h1>
         <h2>SKY FORTRESS EDITION</h2>
-        <p>Neu: Sleek realistische Flügel (verjüngt/swept), Helikopter & Gleiter, Kanone, Aerobatik-Smoke, Pause-Menü + Settings, Heißluftballons, Airshow-Ringe, Landescheinwerfer/Strobe-Lichter, Wing-Flex, Fahrwerkskompression, Sommer/Winter, Photo-Modus, Achievements & mehr!</p>
+        <p>V13: Fahrwerk endlich einfahrbar (mit Türen + Geräusch)! 10+ neue Sounds (Gear, Klappen, Reifenquietschen, Stall-Horn, GPWS, Tankwarnung). Kraftstoffsystem mit Tanken an Flughäfen. Erweiterte Map: 4 Flughäfen, Flugzeugträger, Vulkan mit Rauch, Inseln mit Palmen, Windkraftanlagen, Leuchttürme mit rotierendem Licht, Stromleitungen, Brücken. ATC-Wegpunkte + vieles mehr!</p>
         <div class="plane-grid">
             <button class="plane-btn" onclick="startGame('CESSNA')">🛩️ Cessna 172<small>Leicht · Trainer · Stall 45kt</small></button>
             <button class="plane-btn" onclick="startGame('A320')">✈️ Airbus A320neo<small>Verkehrs · Stall 120kt</small></button>
@@ -254,9 +254,13 @@
             <div><span class="lbl">V/S</span>  <span id="ui-vspeed">0</span> ft/m</div>
             <div><span class="lbl">HDG</span>  <span id="ui-heading">000</span>°</div>
             <div><span class="lbl">FLP</span>  <span id="ui-flaps">0</span>°</div>
+            <div><span class="lbl">FUEL</span> <span id="ui-fuel">100</span>% <span id="ui-fuel-bar" style="display:inline-block;width:40px;height:8px;background:#222;border-radius:4px;vertical-align:middle;margin-left:2px;"><span id="ui-fuel-fill" style="display:block;height:100%;width:100%;background:#0f0;border-radius:4px;"></span></span></div>
+            <div><span class="lbl">WPT</span>  <span id="ui-waypoint">---</span></div>
             <div class="warning" id="stall-warning">⚠️ STALL WARNING</div>
             <div class="warning" id="pull-up-warning">⚠️ PULL UP</div>
             <div class="warning" id="overspeed-warning">⚠️ OVERSPEED</div>
+            <div class="warning" id="lowfuel-warning">⚠️ LOW FUEL</div>
+            <div class="warning" id="engine-warning">⚠️ ENGINE OUT</div>
         </div>
 
         <div id="score-panel">
@@ -368,6 +372,9 @@
         let buildings = [], collidables = [], particles = [], contrails = [], debrisParts = [], bombs = [], flares = [], bullets = [];
         let aiPlanes = [], trafficCars = [], trees = [], birds = [], clouds = [], runways = [], airports = [];
         let balloons = [], rings = [], smokeTrail = [];
+        let windTurbines = [], lighthouses = [], powerLines = [], carrierGroup = null;
+        let waypoints = []; let currentWaypoint = 0;
+        let stallHornTimer = 0, gpwsTimer = 0, lowFuelTimer = 0;
         let formationAI = null;
         let rainSystem = null, snowSystem = null, lightningFlash = 0;
         let planeBox = new THREE.Box3();
@@ -395,7 +402,8 @@
             position: new THREE.Vector3(0, 1.8, 1400), speed: 0, verticalDrift: 0, thrust: 0,
             pitch: 0, roll: 0, yaw: 0, targetPitchRate: 0, targetRollRate: 0,
             rudder: 0, flapIndex: 0, spoilers: false, brakes: false, reverseThrust: false,
-            onGround: true, airborneTime: 0, loadFactor: 1.0
+            onGround: true, airborneTime: 0, loadFactor: 1.0,
+            fuel: 100, fuelCapacity: 100, engineOn: true
         };
 
         // Weather & Season
@@ -538,6 +546,11 @@
                 const dx = x - rw.x; const dz = z - rw.z;
                 if (Math.abs(dx) < rw.width/2 && Math.abs(dz) < rw.length/2) return true;
             }
+            // Carrier deck check (carrier moves)
+            if(carrierGroup) {
+                const cdx = x - carrierGroup.position.x; const cdz = z - carrierGroup.position.z;
+                if(Math.abs(cdx) < 65 && Math.abs(cdz) < 155) return true;
+            }
             return false;
         }
 
@@ -586,6 +599,79 @@
                 const filter = audioCtx.createBiquadFilter(); filter.type = 'lowpass'; filter.frequency.setValueAtTime(800,audioCtx.currentTime); filter.frequency.exponentialRampToValueAtTime(60,audioCtx.currentTime+dur);
                 const g = audioCtx.createGain(); g.gain.setValueAtTime(0.8,audioCtx.currentTime); g.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+dur);
                 noise.connect(filter); filter.connect(g); g.connect(masterGain); noise.start(); noise.stop(audioCtx.currentTime+dur);
+            }
+            else if (type === 'gear') {
+                // Mechanical clunk: low thump + click
+                osc.type='square'; osc.frequency.setValueAtTime(80,audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(40,audioCtx.currentTime+0.15);
+                gain.gain.setValueAtTime(0.3,audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.2);
+                osc.start(); osc.stop(audioCtx.currentTime+0.2);
+                const o2 = audioCtx.createOscillator(); const g2 = audioCtx.createGain();
+                o2.type='square'; o2.frequency.setValueAtTime(2000,audioCtx.currentTime+0.1);
+                g2.gain.setValueAtTime(0.15,audioCtx.currentTime+0.1); g2.gain.exponentialRampToValueAtTime(0.001,audioCtx.currentTime+0.15);
+                o2.connect(g2); g2.connect(masterGain); o2.start(); o2.stop(audioCtx.currentTime+0.15);
+            }
+            else if (type === 'flap') {
+                // Electric whir: rising tone
+                osc.type='sawtooth'; osc.frequency.setValueAtTime(200,audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(400,audioCtx.currentTime+0.6);
+                gain.gain.setValueAtTime(0.08,audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.6);
+                osc.start(); osc.stop(audioCtx.currentTime+0.6);
+            }
+            else if (type === 'tdchirp') {
+                // Tire squeal: high freq noise burst
+                const dur = 0.4; const bs = audioCtx.sampleRate * dur; const buf = audioCtx.createBuffer(1, bs, audioCtx.sampleRate);
+                const dd = buf.getChannelData(0); for (let i = 0; i < bs; i++) dd[i] = Math.random() * 2 - 1;
+                const n = audioCtx.createBufferSource(); n.buffer = buf;
+                const f = audioCtx.createBiquadFilter(); f.type='bandpass'; f.frequency.value=3000; f.Q.value=5;
+                const g2 = audioCtx.createGain(); g2.gain.setValueAtTime(0.4,audioCtx.currentTime); g2.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+dur);
+                n.connect(f); f.connect(g2); g2.connect(masterGain); n.start(); n.stop(audioCtx.currentTime+dur);
+            }
+            else if (type === 'brake') {
+                // Brake squeal: short high tone
+                osc.type='sine'; osc.frequency.setValueAtTime(2500,audioCtx.currentTime); osc.frequency.linearRampToValueAtTime(1800,audioCtx.currentTime+0.3);
+                gain.gain.setValueAtTime(0.15,audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.3);
+                osc.start(); osc.stop(audioCtx.currentTime+0.3);
+            }
+            else if (type === 'stallhorn') {
+                // Intermittent stall horn: beep beep
+                osc.type='square'; osc.frequency.setValueAtTime(800,audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.2,audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0.2,audioCtx.currentTime+0.1); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.2);
+                gain.gain.setValueAtTime(0.2,audioCtx.currentTime+0.25); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.35);
+                osc.start(); osc.stop(audioCtx.currentTime+0.35);
+            }
+            else if (type === 'gpws') {
+                // GPWS "pull up": repeated beeps
+                osc.type='sine'; osc.frequency.setValueAtTime(1000,audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.25,audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.15);
+                gain.gain.setValueAtTime(0.25,audioCtx.currentTime+0.2); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.35);
+                osc.start(); osc.stop(audioCtx.currentTime+0.35);
+            }
+            else if (type === 'burner') {
+                // Balloon burner: whoosh
+                const dur = 0.5; const bs = audioCtx.sampleRate * dur; const buf = audioCtx.createBuffer(1, bs, audioCtx.sampleRate);
+                const dd = buf.getChannelData(0); for (let i = 0; i < bs; i++) dd[i] = (Math.random()*2-1) * (1 - i/bs);
+                const n = audioCtx.createBufferSource(); n.buffer = buf;
+                const f = audioCtx.createBiquadFilter(); f.type='lowpass'; f.frequency.value=500;
+                const g2 = audioCtx.createGain(); g2.gain.value=0.2;
+                n.connect(f); f.connect(g2); g2.connect(masterGain); n.start(); n.stop(audioCtx.currentTime+dur);
+            }
+            else if (type === 'startup') {
+                // Engine spool up: rising frequency
+                osc.type='sawtooth'; osc.frequency.setValueAtTime(30,audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(120,audioCtx.currentTime+2);
+                gain.gain.setValueAtTime(0.05,audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0.12,audioCtx.currentTime+2); gain.gain.exponentialRampToValueAtTime(0.08,audioCtx.currentTime+3);
+                osc.start(); osc.stop(audioCtx.currentTime+3);
+            }
+            else if (type === 'lowfuel') {
+                // Low fuel beep: two tones
+                osc.type='square'; osc.frequency.setValueAtTime(1200,audioCtx.currentTime);
+                gain.gain.setValueAtTime(0.2,audioCtx.currentTime); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.1);
+                gain.gain.setValueAtTime(0.2,audioCtx.currentTime+0.15); gain.gain.linearRampToValueAtTime(0,audioCtx.currentTime+0.25);
+                osc.start(); osc.stop(audioCtx.currentTime+0.25);
+            }
+            else if (type === 'waypoint') {
+                // Waypoint reached: pleasant chime
+                osc.type='sine'; osc.frequency.setValueAtTime(880,audioCtx.currentTime); osc.frequency.setValueAtTime(1100,audioCtx.currentTime+0.08); osc.frequency.setValueAtTime(1320,audioCtx.currentTime+0.16);
+                gain.gain.setValueAtTime(0.25,audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.5);
+                osc.start(); osc.stop(audioCtx.currentTime+0.5);
             }
         }
 
@@ -670,6 +756,13 @@
             physics.pitch = 0; physics.roll = 0; physics.yaw = 0; physics.rudder = 0;
             physics.flapIndex = 0; physics.spoilers = false; physics.brakes = false; physics.reverseThrust = false;
             physics.onGround = (currentPlane !== 'GLIDER'); physics.airborneTime = 0; physics.loadFactor = 1.0;
+            // Fuel capacity per aircraft
+            const fuelCaps = {CESSNA:60, A320:100, B767:100, F22:80, CONCORDE:90, HELO:50, GLIDER:0};
+            physics.fuelCapacity = fuelCaps[currentPlane] || 100;
+            physics.fuel = physics.fuelCapacity;
+            physics.engineOn = true;
+            // Reset waypoints
+            currentWaypoint = 0;
             gearDeployed = true; gearAnimProgress = 1.0; gearCompress = 0;
             document.getElementById('gear-btn').className = 'side-btn gear-down'; document.getElementById('gear-text').innerText = 'DOWN';
             document.getElementById('throttle-knob').style.bottom = '0%';
@@ -741,10 +834,12 @@
             starsField = new THREE.Points(starGeo, starMat); scene.add(starsField);
 
             createZonedCity();
+            createExtendedMap();
             createClouds();
             createBirds();
             createBalloons();
             createRings();
+            createWaypoints();
             spawnTraffic();
             spawnAIPlanes();
             spawnFormationAI();
@@ -758,7 +853,7 @@
         }
 
         function createZonedCity() {
-            const groundGeo = new THREE.PlaneGeometry(32000, 32000, 128, 128);
+            const groundGeo = new THREE.PlaneGeometry(48000, 48000, 128, 128);
             const pos = groundGeo.attributes.position;
             const colors = []; const colorObj = new THREE.Color();
 
@@ -780,7 +875,7 @@
             ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 
             const waterMat = new THREE.MeshLambertMaterial({color: 0x1ca3ec, transparent: true, opacity: 0.85});
-            const water = new THREE.Mesh(new THREE.PlaneGeometry(32000, 32000), waterMat);
+            const water = new THREE.Mesh(new THREE.PlaneGeometry(48000, 48000), waterMat);
             water.rotation.x = -Math.PI / 2; water.position.y = WATER_LEVEL; scene.add(water);
 
             for(let i=0; i<4; i++) {
@@ -912,6 +1007,259 @@
             airports.push({x:cx, z:cz, group:grp});
         }
 
+        // --- Extended Map: landmarks, carrier, volcano, islands, wind turbines, lighthouses, power lines, bridges ---
+        function createExtendedMap() {
+            // Two more airports
+            createAirport(7000, -5000, 'EAST');
+            createAirport(-8000, -6000, 'SOUTH');
+
+            // Aircraft carrier at sea
+            createAircraftCarrier(5000, 8000);
+
+            // Volcano with smoke
+            createVolcano(-12000, 3000);
+
+            // Island archipelago
+            for(let i=0; i<5; i++) {
+                const angle = (i/5) * Math.PI * 2;
+                const dist = 10000 + Math.random() * 3000;
+                createIsland(Math.cos(angle) * dist, Math.sin(angle) * dist);
+            }
+
+            // Wind turbines (rotating blades)
+            for(let i=0; i<15; i++) {
+                const angle = Math.random() * Math.PI * 2;
+                const dist = 3000 + Math.random() * 5000;
+                const wx = Math.cos(angle) * dist;
+                const wz = Math.sin(angle) * dist;
+                if(Math.sqrt(wx*wx + wz*wz) < 2000) continue;
+                if(isRiver(wx, wz)) continue;
+                createWindTurbine(wx, wz);
+            }
+
+            // Lighthouses at coast
+            createLighthouse(3000, 9000);
+            createLighthouse(-9000, -3000);
+
+            // Power lines
+            createPowerLine(0, 5000, 6000, 5000);
+            createPowerLine(-5000, 0, -5000, 6000);
+
+            // Bridges over river (fly under)
+            createBridge(0, 0);
+            createBridge(0, -2000);
+        }
+
+        function createAircraftCarrier(cx, cz) {
+            const grp = new THREE.Group();
+            // Hull
+            const hull = new THREE.Mesh(new THREE.BoxGeometry(120, 20, 300), new THREE.MeshLambertMaterial({color: 0x444455}));
+            hull.position.y = 0; grp.add(hull);
+            // Flight deck
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(130, 2, 310), new THREE.MeshLambertMaterial({color: 0x333333}));
+            deck.position.y = 11; grp.add(deck);
+            // Runway markings on deck
+            for(let i=-120; i<=120; i+=30) {
+                const mark = new THREE.Mesh(new THREE.PlaneGeometry(3, 15), new THREE.MeshBasicMaterial({color: 0xffffff}));
+                mark.rotation.x = -Math.PI/2; mark.position.set(0, 12.2, i); grp.add(mark);
+            }
+            // Island (superstructure)
+            const island = new THREE.Mesh(new THREE.BoxGeometry(25, 30, 40), new THREE.MeshLambertMaterial({color: 0x555566}));
+            island.position.set(45, 26, 80); grp.add(island);
+            // Tower
+            const tower = new THREE.Mesh(new THREE.BoxGeometry(12, 15, 12), new THREE.MeshLambertMaterial({color: 0x666677}));
+            tower.position.set(45, 48, 80); grp.add(tower);
+            // Radar
+            const radar = new THREE.Mesh(new THREE.CylinderGeometry(5, 5, 2, 12), new THREE.MeshLambertMaterial({color: 0x888888}));
+            radar.position.set(45, 56, 80); grp.add(radar);
+            // Arresting cables
+            for(let i=0; i<4; i++) {
+                const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.3, 130, 8), new THREE.MeshBasicMaterial({color: 0x888888}));
+                cable.rotation.z = Math.PI/2; cable.position.set(0, 12, 100 - i*15); grp.add(cable);
+            }
+            // Deck lights
+            for(let i=-1; i<=1; i+=2) {
+                for(let j=-140; j<=140; j+=40) {
+                    const light = new THREE.Mesh(new THREE.SphereGeometry(1, 6, 4), new THREE.MeshBasicMaterial({color: 0xffff00}));
+                    light.position.set(i*60, 12.5, j); light.userData.isLight = true; grp.add(light);
+                }
+            }
+            grp.position.set(cx, 0, cz);
+            grp.userData = { carrier: true, angle: Math.random()*Math.PI*2, speed: 8, baseX: cx, baseZ: cz };
+            scene.add(grp);
+            carrierGroup = grp;
+            // Add carrier runway to runways array (movable - checked dynamically)
+        }
+
+        function createVolcano(cx, cz) {
+            const grp = new THREE.Group();
+            // Cone
+            const cone = new THREE.Mesh(new THREE.ConeGeometry(1500, 1200, 16), new THREE.MeshLambertMaterial({color: 0x4a3a2a}));
+            grp.add(cone);
+            // Crater (dip at top)
+            const crater = new THREE.Mesh(new THREE.CylinderGeometry(300, 400, 100, 16), new THREE.MeshLambertMaterial({color: 0x2a1a0a}));
+            crater.position.y = 550; grp.add(crater);
+            // Lava glow
+            const lava = new THREE.Mesh(new THREE.CircleGeometry(250, 16), new THREE.MeshBasicMaterial({color: 0xff4400}));
+            lava.rotation.x = -Math.PI/2; lava.position.y = 580; grp.add(lava);
+            const lavaLight = new THREE.PointLight(0xff4400, 2, 500); lavaLight.position.y = 600; grp.add(lavaLight);
+            // Smoke plume
+            for(let i=0; i<8; i++) {
+                const smoke = new THREE.Mesh(new THREE.SphereGeometry(80 + i*20, 8, 6), new THREE.MeshLambertMaterial({color: 0x444444, transparent: true, opacity: 0.5}));
+                smoke.position.y = 700 + i*100; smoke.position.x = (Math.random()-0.5)*50;
+                smoke.position.z = (Math.random()-0.5)*50;
+                smoke.userData = { baseY: smoke.position.y, phase: Math.random()*Math.PI*2 };
+                grp.add(smoke);
+                if(!grp.userData.smokeBalls) grp.userData.smokeBalls = [];
+                grp.userData.smokeBalls.push(smoke);
+            }
+            grp.position.set(cx, getTerrainHeight(cx, cz), cz);
+            scene.add(grp);
+            collidables.push(new THREE.Box3().setFromObject(grp).expandByScalar(-100));
+        }
+
+        function createIsland(cx, cz) {
+            const grp = new THREE.Group();
+            // Sandy beach
+            const beach = new THREE.Mesh(new THREE.CircleGeometry(400, 24), new THREE.MeshLambertMaterial({color: 0xe8d8a0}));
+            beach.rotation.x = -Math.PI/2; beach.position.y = WATER_LEVEL + 0.5; grp.add(beach);
+            // Hill
+            const hill = new THREE.Mesh(new THREE.ConeGeometry(200, 150, 12), new THREE.MeshLambertMaterial({color: 0x4a7a3a}));
+            hill.position.y = 75; grp.add(hill);
+            // Palm trees
+            const palmMat = new THREE.MeshLambertMaterial({color: 0x8b4513});
+            const leafMat = new THREE.MeshLambertMaterial({color: 0x2a8a2a});
+            for(let i=0; i<6; i++) {
+                const angle = (i/6) * Math.PI * 2;
+                const dist = 100 + Math.random() * 200;
+                const trunk = new THREE.Mesh(new THREE.CylinderGeometry(2, 3, 20, 6), palmMat);
+                trunk.position.set(Math.cos(angle)*dist, 10, Math.sin(angle)*dist); grp.add(trunk);
+                for(let l=0; l<5; l++) {
+                    const leaf = new THREE.Mesh(new THREE.ConeGeometry(2, 10, 4), leafMat);
+                    leaf.position.set(trunk.position.x + Math.cos(l/5*Math.PI*2)*4, 20, trunk.position.z + Math.sin(l/5*Math.PI*2)*4);
+                    leaf.rotation.z = Math.cos(l/5*Math.PI*2) * 0.5; leaf.rotation.x = Math.sin(l/5*Math.PI*2) * 0.5;
+                    grp.add(leaf);
+                }
+            }
+            grp.position.set(cx, 0, cz);
+            scene.add(grp);
+        }
+
+        function createWindTurbine(x, z) {
+            const grp = new THREE.Group();
+            // Tower
+            const tower = new THREE.Mesh(new THREE.CylinderGeometry(2, 4, 80, 8), new THREE.MeshLambertMaterial({color: 0xeeeeee}));
+            tower.position.y = 40; grp.add(tower);
+            // Nacelle
+            const nacelle = new THREE.Mesh(new THREE.BoxGeometry(6, 4, 10), new THREE.MeshLambertMaterial({color: 0xdddddd}));
+            nacelle.position.y = 82; grp.add(nacelle);
+            // Blades (rotating)
+            const bladeHub = new THREE.Group();
+            bladeHub.position.set(0, 82, -5);
+            const hub = new THREE.Mesh(new THREE.ConeGeometry(2, 4, 8).rotateX(-Math.PI/2), new THREE.MeshLambertMaterial({color: 0x888888}));
+            bladeHub.add(hub);
+            for(let b=0; b<3; b++) {
+                const blade = new THREE.Mesh(new THREE.BoxGeometry(1.5, 40, 1), new THREE.MeshLambertMaterial({color: 0xffffff}));
+                blade.position.y = 20; blade.rotation.z = (b/3) * Math.PI * 2;
+                bladeHub.add(blade);
+            }
+            grp.add(bladeHub);
+            grp.position.set(x, getTerrainHeight(x, z), z);
+            scene.add(grp);
+            windTurbines.push({mesh: grp, bladeHub: bladeHub, speed: 0.5 + Math.random() * 0.5});
+        }
+
+        function createLighthouse(x, z) {
+            const grp = new THREE.Group();
+            // Tower (striped red/white)
+            const baseTower = new THREE.Mesh(new THREE.CylinderGeometry(6, 8, 60, 12), new THREE.MeshLambertMaterial({color: 0xffffff}));
+            baseTower.position.y = 30; grp.add(baseTower);
+            // Red stripes
+            for(let s=0; s<3; s++) {
+                const stripe = new THREE.Mesh(new THREE.CylinderGeometry(6.5, 7.5, 8, 12), new THREE.MeshLambertMaterial({color: 0xcc2222}));
+                stripe.position.y = 15 + s*20; grp.add(stripe);
+            }
+            // Lamp room
+            const lampRoom = new THREE.Mesh(new THREE.BoxGeometry(12, 8, 12), new THREE.MeshLambertMaterial({color: 0xffaa00}));
+            lampRoom.position.y = 64; grp.add(lampRoom);
+            // Rotating beam (spotlight)
+            const beam = new THREE.SpotLight(0xffee88, 3, 8000, Math.PI/12, 0.5, 1);
+            beam.position.y = 64; beam.target.position.set(5000, 0, 0); grp.add(beam); grp.add(beam.target);
+            // Dome
+            const dome = new THREE.Mesh(new THREE.ConeGeometry(7, 5, 12), new THREE.MeshLambertMaterial({color: 0xcc2222}));
+            dome.position.y = 70; grp.add(dome);
+            grp.position.set(x, getTerrainHeight(x, z), z);
+            scene.add(grp);
+            lighthouses.push({mesh: grp, beam: beam, angle: 0});
+        }
+
+        function createPowerLine(x1, z1, x2, z2) {
+            const grp = new THREE.Group();
+            const dx = x2 - x1; const dz = z2 - z1;
+            const dist = Math.sqrt(dx*dx + dz*dz);
+            const numTowers = Math.floor(dist / 500);
+            for(let i=0; i<=numTowers; i++) {
+                const t = i / numTowers;
+                const tx = x1 + dx * t; const tz = z1 + dz * t;
+                const tower = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 2.5, 80, 6), new THREE.MeshLambertMaterial({color: 0x888888}));
+                tower.position.set(tx, getTerrainHeight(tx, tz) + 40, tz); grp.add(tower);
+                // Crossbar
+                const bar = new THREE.Mesh(new THREE.BoxGeometry(20, 1, 1), new THREE.MeshLambertMaterial({color: 0x888888}));
+                bar.position.set(tx, getTerrainHeight(tx, tz) + 75, tz); grp.add(bar);
+                // Wires (cylinders between towers)
+                if(i < numTowers) {
+                    const nextT = (i+1) / numTowers;
+                    const nx = x1 + dx * nextT; const nz = z1 + dz * nextT;
+                    for(let w=-1; w<=1; w++) {
+                        const wire = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.15, dist/numTowers, 4), new THREE.MeshLambertMaterial({color: 0x333333}));
+                        wire.position.set((tx+nx)/2 + w*7, getTerrainHeight(tx, tz) + 70, (tz+nz)/2);
+                        wire.lookAt(nx + w*7, getTerrainHeight(nx, nz) + 70, nz);
+                        wire.rotateX(Math.PI/2);
+                        grp.add(wire);
+                    }
+                }
+            }
+            scene.add(grp);
+        }
+
+        function createBridge(cx, cz) {
+            const grp = new THREE.Group();
+            // Deck (high enough to fly under)
+            const deck = new THREE.Mesh(new THREE.BoxGeometry(80, 5, 200), new THREE.MeshLambertMaterial({color: 0x555555}));
+            deck.position.y = 40; grp.add(deck);
+            // Pylons
+            for(let p=-1; p<=1; p+=2) {
+                for(let s=-1; s<=1; s+=2) {
+                    const pylon = new THREE.Mesh(new THREE.BoxGeometry(8, 45, 8), new THREE.MeshLambertMaterial({color: 0x666666}));
+                    pylon.position.set(p*35, 22, s*80); grp.add(pylon);
+                }
+            }
+            // Suspension cables
+            for(let s=-1; s<=1; s+=2) {
+                const cable = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 200, 6), new THREE.MeshLambertMaterial({color: 0x888888}));
+                cable.rotation.x = Math.PI/2; cable.position.set(s*35, 42, 0); grp.add(cable);
+            }
+            grp.position.set(cx, WATER_LEVEL, cz);
+            scene.add(grp);
+            // Don't add to collidables - you can fly under it!
+        }
+
+        function createWaypoints() {
+            const wpData = [
+                {name: 'WP1', x: 2000, y: 1500, z: -2000},
+                {name: 'WP2', x: 6000, y: 2000, z: -4000},
+                {name: 'WP3', x: 9000, y: 2500, z: 0},
+                {name: 'WP4', x: 5000, y: 2000, z: 6000},
+                {name: 'WP5', x: -3000, y: 1500, z: 4000},
+            ];
+            wpData.forEach(wp => {
+                const ring = new THREE.Mesh(new THREE.TorusGeometry(80, 6, 8, 24), new THREE.MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.8}));
+                ring.position.set(wp.x, wp.y, wp.z);
+                scene.add(ring);
+                waypoints.push({name: wp.name, position: new THREE.Vector3(wp.x, wp.y, wp.z), mesh: ring});
+            });
+        }
+
         function createClouds() {
             const cloudMat = new THREE.MeshLambertMaterial({color: 0xffffff, transparent: true, opacity: 0.85});
             for(let i=0; i<40; i++) {
@@ -1038,12 +1386,16 @@
 
         function createFahrwerk(x, y, z) {
             const strut = new THREE.Group(); strut.position.set(x, y, z);
+            strut.userData.baseY = y;
+            strut.userData.foldDir = z < 0 ? 1 : -1; // nose gear folds back, main gear folds forward
             const pole = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 2.5), new THREE.MeshStandardMaterial({ color: 0x888888 })); pole.position.y = -1.25; strut.add(pole);
             const wGeo = new THREE.CylinderGeometry(0.6, 0.6, 0.4, 16); wGeo.rotateZ(Math.PI/2);
             const w1 = new THREE.Mesh(wGeo, new THREE.MeshStandardMaterial({ color: 0x222222 })); w1.position.set(-0.3, -2.5, 0); strut.add(w1);
             const w2 = w1.clone(); w2.position.x = 0.3; strut.add(w2);
-            const door = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3, 1), new THREE.MeshStandardMaterial({color:0xdddddd})); door.position.set(0.8, -1.5, 0); strut.add(door);
+            // Gear door (separate, attached to strut but rotates independently)
+            const door = new THREE.Mesh(new THREE.BoxGeometry(0.5, 3, 1), new THREE.MeshStandardMaterial({color:0xdddddd})); door.position.set(0, -1.5, 0.6); strut.add(door);
             strut.userData.pole = pole;
+            strut.userData.door = door;
             return strut;
         }
 
@@ -1300,9 +1652,9 @@
             bind('restart-pause-btn', () => { togglePause(); backToMenu(); });
             bind('menu-btn', backToMenu);
             const brakeBtn = document.getElementById('brake-btn');
-            brakeBtn.addEventListener('touchstart', (e) => { e.preventDefault(); physics.brakes = true; brakeBtn.classList.add('active'); });
+            brakeBtn.addEventListener('touchstart', (e) => { e.preventDefault(); physics.brakes = true; brakeBtn.classList.add('active'); playSound('brake'); });
             brakeBtn.addEventListener('touchend', (e) => { e.preventDefault(); physics.brakes = false; brakeBtn.classList.remove('active'); });
-            brakeBtn.addEventListener('mousedown', () => { physics.brakes = true; brakeBtn.classList.add('active'); });
+            brakeBtn.addEventListener('mousedown', () => { physics.brakes = true; brakeBtn.classList.add('active'); playSound('brake'); });
             brakeBtn.addEventListener('mouseup', () => { physics.brakes = false; brakeBtn.classList.remove('active'); });
             brakeBtn.addEventListener('mouseleave', () => { physics.brakes = false; brakeBtn.classList.remove('active'); });
             // Settings
@@ -1333,7 +1685,7 @@
                 if(e.key === ' ') { if(currentPlane === 'F22') fireMissile(); }
                 if(e.key.toLowerCase() === 'x') { if(currentPlane === 'F22') spawnFlares(); }
                 if(e.key.toLowerCase() === 'g') { if(currentPlane === 'F22') { gunFiring = !gunFiring; document.getElementById('gun-btn').classList.toggle('active', gunFiring); } }
-                if(e.key.toLowerCase() === 'b') { physics.brakes = true; document.getElementById('brake-btn').classList.add('active'); }
+                if(e.key.toLowerCase() === 'b') { physics.brakes = true; document.getElementById('brake-btn').classList.add('active'); playSound('brake'); }
                 if(e.key.toLowerCase() === 'f') cycleFlaps();
                 if(e.key.toLowerCase() === 'v') { physics.spoilers = !physics.spoilers; }
                 if(e.key.toLowerCase() === 'l') toggleGear();
@@ -1374,7 +1726,7 @@
             gearDeployed = !gearDeployed;
             document.getElementById('gear-btn').className = 'side-btn ' + (gearDeployed ? 'gear-down' : '');
             document.getElementById('gear-text').innerText = gearDeployed ? 'DOWN' : 'UP';
-            playSound('click');
+            playSound('gear');
         }
         function cycleCamera() {
             cameraMode = (cameraMode + 1) % 4;
@@ -1387,7 +1739,7 @@
             physics.flapIndex = (physics.flapIndex + 1) % stats.flapSteps.length;
             document.getElementById('flaps-text').innerText = stats.flapSteps[physics.flapIndex];
             document.getElementById('flaps-btn').className = 'side-btn' + (physics.flapIndex > 0 ? ' active' : '');
-            playSound('click');
+            playSound('flap');
         }
         function toggleAutopilotPanel() {
             if(currentPlane === 'CESSNA' || currentPlane === 'HELO' || currentPlane === 'GLIDER') return;
@@ -1445,7 +1797,7 @@
             // Rebuild city ground colors (simple: just update ground material color via overlay)
             // For simplicity, overlay a snow plane in winter
             if(seasonMode === 1 && !window._snowGround) {
-                window._snowGround = new THREE.Mesh(new THREE.PlaneGeometry(32000, 32000), new THREE.MeshLambertMaterial({color: 0xeef4f8, transparent: true, opacity: 0.7}));
+                window._snowGround = new THREE.Mesh(new THREE.PlaneGeometry(48000, 48000), new THREE.MeshLambertMaterial({color: 0xeef4f8, transparent: true, opacity: 0.7}));
                 window._snowGround.rotation.x = -Math.PI/2; window._snowGround.position.y = 0.5; scene.add(window._snowGround);
                 // trees get snow
                 trees.forEach(t => { if(t.mesh) t.mesh.material = matSnow; });
@@ -1630,6 +1982,22 @@
                 let climbDecel = gravityForce * Math.sin(Math.max(0, physics.pitch));
                 let thrustSign = (physics.reverseThrust && physics.speed > 0) ? -1 : 1;
                 let thrustAccel = thrustSign * (physics.thrust / 100) * stats.accelMult;
+                // Fuel consumption
+                if(physics.engineOn && physics.fuel > 0) {
+                    physics.fuel -= (physics.thrust / 100) * dt * 0.4 * (currentPlane === 'F22' ? 1.5 : (currentPlane === 'CONCORDE' ? 1.3 : 1.0));
+                    if(physics.fuel < 0) physics.fuel = 0;
+                }
+                if(physics.fuel <= 0 && physics.engineOn) {
+                    physics.engineOn = false; physics.thrust = 0;
+                    document.getElementById('throttle-knob').style.bottom = '0%';
+                }
+                // Refuel at airport when stopped
+                if(physics.onGround && onRWY && physics.speed < 5) {
+                    physics.fuel = Math.min(physics.fuelCapacity, physics.fuel + dt * 8);
+                    if(!physics.engineOn && physics.fuel > 5) physics.engineOn = true;
+                }
+                // If engine off, no thrust
+                if(!physics.engineOn) thrustAccel = 0;
                 let dragAccel = (physics.speed * physics.speed * (stats.dragCoef + flapDragAdd)) + (gearDeployed ? physics.speed * stats.gearDrag : 0) + (physics.spoilers ? physics.speed * physics.speed * 0.00012 : 0);
                 if (physics.position.y <= groundY + 1.8) {
                     physics.onGround = true;
@@ -1650,8 +2018,10 @@
                 if(weatherMode === 3 && !physics.onGround) { vertAccel += (Math.random()-0.5) * 8; physics.roll += (Math.random()-0.5) * 0.05; physics.yaw += (Math.random()-0.5) * 0.03; }
                 if (physics.speed < stats.stall && physics.position.y > groundY + 10) {
                     document.getElementById('stall-warning').style.display = 'block';
+                    stallHornTimer -= dt;
+                    if(stallHornTimer <= 0) { playSound('stallhorn'); stallHornTimer = 0.5; }
                     physics.pitch -= THREE.MathUtils.degToRad(15) * dt; vertAccel -= 20;
-                } else { document.getElementById('stall-warning').style.display = 'none'; }
+                } else { document.getElementById('stall-warning').style.display = 'none'; stallHornTimer = 0; }
                 if(physics.speed > stats.maxSpeed) {
                     document.getElementById('overspeed-warning').style.display = 'block';
                     if(physics.speed > stats.maxSpeed * 1.2) { triggerCrash("Overspeed - Strukturversagen!"); return; }
@@ -1675,13 +2045,28 @@
             if(mainRotor) mainRotor.rotation.y += (0.5 + physics.thrust * 0.04);
             if(tailRotor) tailRotor.rotation.x += (0.8 + physics.thrust * 0.05);
 
-            // Gear compression
-            if (gearGroup && gearDeployed) {
+            // Gear animation (FIXED: was only animating when gearDeployed=true, now always runs)
+            if (gearGroup) {
+                const prevProgress = gearAnimProgress;
                 gearAnimProgress += ((gearDeployed ? 1.0 : 0.0) - gearAnimProgress) * dt * 3.0;
+                // Play gear sound when transition starts
+                if (Math.abs(prevProgress - (gearDeployed ? 1 : 0)) > 0.01 && Math.abs(gearAnimProgress - prevProgress) > 0.001) {
+                    if (prevProgress > 0.95 || prevProgress < 0.05) playSound('gear');
+                }
                 gearGroup.children.forEach(strut => {
-                    strut.rotation.x = (1.0 - gearAnimProgress) * (Math.PI / 2);
+                    const foldDir = strut.userData.foldDir || 1;
+                    // Fold up: rotate strut into fuselage (90° in fold direction)
+                    strut.rotation.x = (1.0 - gearAnimProgress) * (Math.PI / 2) * foldDir;
+                    // Hide struts when mostly retracted (tucked in wheel well)
+                    strut.visible = gearAnimProgress > 0.08;
+                    // Gear door: opens during transition, closes when done
+                    if (strut.userData.door) {
+                        const doorOpen = Math.abs(gearAnimProgress - (gearDeployed ? 1 : 0));
+                        strut.userData.door.rotation.x = doorOpen * 0.8 * foldDir;
+                        strut.userData.door.visible = gearAnimProgress > 0.02 && gearAnimProgress < 0.98 || doorOpen > 0.05;
+                    }
                     // Compress when on ground / hard landing
-                    const targetCompress = (physics.onGround ? Math.min(1, Math.max(0, -physics.verticalDrift * 0.05) + 0.2) : 0);
+                    const targetCompress = (physics.onGround && gearDeployed ? Math.min(1, Math.max(0, -physics.verticalDrift * 0.05) + 0.2) : 0);
                     gearCompress += (targetCompress - gearCompress) * dt * 8;
                     strut.position.y = strut.userData.baseY !== undefined ? strut.userData.baseY : strut.position.y;
                     if(strut.userData.pole) strut.userData.pole.scale.y = 1 - gearCompress * 0.3;
@@ -1708,7 +2093,7 @@
             if(physics.onGround && physics.airborneTime > 3 && physics.verticalDrift < -2) {
                 if(onRWY && physics.speed > 40 && physics.speed < stats.takeoffSpeed * 1.5) {
                     score.landings++;
-                    playSound('landing'); showLandingToast(); createTouchdownSmoke();
+                    playSound('tdchirp'); playSound('landing'); showLandingToast(); createTouchdownSmoke();
                     if(!achievements.firstLanding) { achievements.firstLanding = true; showAchievement('Erste Landung!'); }
                 }
                 physics.airborneTime = 0;
@@ -1779,7 +2164,10 @@
                 else if (!gearDeployed && physics.speed > 50 && physics.airborneTime > 1 && currentPlane !== 'HELO') triggerCrash("Bauchlandung - Fahrwerk eingefahren!");
                 else if (physics.verticalDrift < -30) triggerCrash("Zu hart aufgeschlagen!");
             } else {
-                document.getElementById('pull-up-warning').style.display = (physics.position.y < tHeight + 200 && physics.verticalDrift < -30) ? 'block' : 'none';
+                const showPullUp = (physics.position.y < tHeight + 200 && physics.verticalDrift < -30);
+                document.getElementById('pull-up-warning').style.display = showPullUp ? 'block' : 'none';
+                if(showPullUp) { gpwsTimer -= dt; if(gpwsTimer <= 0) { playSound('gpws'); gpwsTimer = 0.7; } }
+                else gpwsTimer = 0;
             }
             if (physics.position.y > minHeight + 1 && physics.position.y < 1200) {
                 planeBox.setFromObject(planeGroup); planeBox.expandByScalar(-0.5);
@@ -1962,6 +2350,20 @@
             // Balloons
             mCtx.fillStyle = '#f6c';
             balloons.forEach(b => { const bx = b.position.x*scale - physics.position.x*scale; const bz = b.position.z*scale - physics.position.z*scale; if(Math.abs(bx)<75 && Math.abs(bz)<75) mCtx.fillRect(bx-1, bz-1, 2, 2); });
+            // Waypoints
+            waypoints.forEach((wp, i) => {
+                const wx = wp.position.x*scale - physics.position.x*scale; const wz = wp.position.z*scale - physics.position.z*scale;
+                if(Math.abs(wx)<75 && Math.abs(wz)<75) {
+                    mCtx.fillStyle = i === currentWaypoint ? '#ff0' : '#886600';
+                    mCtx.beginPath(); mCtx.arc(wx, wz, 4, 0, Math.PI*2); mCtx.fill();
+                    if(i === currentWaypoint) { mCtx.strokeStyle = '#ff0'; mCtx.lineWidth=2; mCtx.beginPath(); mCtx.arc(wx, wz, 7, 0, Math.PI*2); mCtx.stroke(); }
+                }
+            });
+            // Carrier
+            if(carrierGroup) {
+                const cx2 = carrierGroup.position.x*scale - physics.position.x*scale; const cz2 = carrierGroup.position.z*scale - physics.position.z*scale;
+                if(Math.abs(cx2)<75 && Math.abs(cz2)<75) { mCtx.fillStyle='#0a0'; mCtx.fillRect(cx2-3, cz2-5, 6, 10); }
+            }
             mCtx.fillStyle = '#f00'; mCtx.font = '12px Arial'; mCtx.textAlign='center'; mCtx.fillText('N', 0, -65); mCtx.restore();
             mCtx.fillStyle = '#0f0'; mCtx.beginPath(); mCtx.moveTo(mcx, mcy-8); mCtx.lineTo(mcx+6, mcy+6); mCtx.lineTo(mcx, mcy+3); mCtx.lineTo(mcx-6, mcy+6); mCtx.fill();
 
@@ -2036,6 +2438,38 @@
                     let hdg = (THREE.MathUtils.radToDeg(physics.yaw) + 360) % 360;
                     document.getElementById('ui-heading').innerText = Math.round(hdg).toString().padStart(3,'0');
                     document.getElementById('ui-flaps').innerText = stats.flapSteps[physics.flapIndex];
+                    // Fuel UI
+                    const fuelPct = Math.round(physics.fuel);
+                    document.getElementById('ui-fuel').innerText = fuelPct;
+                    const fill = document.getElementById('ui-fuel-fill');
+                    if(fill) {
+                        fill.style.width = fuelPct + '%';
+                        fill.style.background = fuelPct > 50 ? '#0f0' : (fuelPct > 20 ? '#fa0' : '#f00');
+                    }
+                    document.getElementById('lowfuel-warning').style.display = (fuelPct < 20 && fuelPct > 0) ? 'block' : 'none';
+                    document.getElementById('engine-warning').style.display = (!physics.engineOn && stats.type !== 'rotary' && currentPlane !== 'GLIDER') ? 'block' : 'none';
+                    // Low fuel beep
+                    if(fuelPct < 20 && fuelPct > 0) { lowFuelTimer -= dt; if(lowFuelTimer <= 0) { playSound('lowfuel'); lowFuelTimer = 2; } }
+                    // Waypoint UI
+                    if(waypoints.length > 0 && currentWaypoint < waypoints.length) {
+                        const wp = waypoints[currentWaypoint];
+                        const wpDist = Math.round(physics.position.distanceTo(wp.position) / 100) * 100;
+                        const wpDir = (Math.atan2(wp.position.x - physics.position.x, wp.position.z - physics.position.z) * 180 / Math.PI + 360) % 360;
+                        document.getElementById('ui-waypoint').innerText = wp.name + ' ' + wpDist + 'm ' + Math.round(wpDir) + '°';
+                        // Check if reached
+                        if(physics.position.distanceTo(wp.position) < 300) {
+                            playSound('waypoint');
+                            wp.mesh.material.color.setHex(0x00ff00);
+                            currentWaypoint++;
+                            if(currentWaypoint >= waypoints.length) {
+                                showAchievement('Strecke abgeschlossen!');
+                                currentWaypoint = 0; // loop
+                                waypoints.forEach(w => { w.mesh.material.color.setHex(0xffff00); });
+                            }
+                        }
+                    } else {
+                        document.getElementById('ui-waypoint').innerText = 'COMPLETE';
+                    }
                     const flightTime = Math.floor((performance.now() - score.startTime) / 1000);
                     const mins = Math.floor(flightTime / 60); const secs = flightTime % 60;
                     document.getElementById('ui-time').innerText = mins + ':' + secs.toString().padStart(2,'0');
@@ -2087,6 +2521,38 @@
                 });
                 // Rings rotation
                 rings.forEach(r => { r.rotation.z += dt * 0.5; });
+                // Waypoint rotation + pulsing
+                waypoints.forEach((wp, i) => { wp.mesh.rotation.z += dt * 0.3; wp.mesh.scale.setScalar(1 + Math.sin(performance.now()/500 + i) * 0.1); });
+
+                // Wind turbines rotating
+                windTurbines.forEach(wt => { if(wt.bladeHub) wt.bladeHub.rotation.z += wt.speed * dt; });
+                // Lighthouse beam rotating
+                lighthouses.forEach(lh => {
+                    lh.angle += dt * 0.5;
+                    if(lh.beam) {
+                        lh.beam.target.position.set(Math.cos(lh.angle) * 5000, 0, Math.sin(lh.angle) * 5000);
+                        lh.beam.intensity = isNight ? 3 : 0;
+                    }
+                });
+                // Carrier moving in circles
+                if(carrierGroup && carrierGroup.userData) {
+                    const ud = carrierGroup.userData;
+                    ud.angle += dt * 0.02;
+                    ud.baseX += Math.cos(ud.angle) * ud.speed * dt;
+                    ud.baseZ += Math.sin(ud.angle) * ud.speed * dt;
+                    carrierGroup.position.x = ud.baseX; carrierGroup.position.z = ud.baseZ;
+                    carrierGroup.rotation.y = ud.angle + Math.PI/2;
+                }
+                // Volcano smoke animation
+                scene.traverse(o => {
+                    if(o.userData && o.userData.smokeBalls) {
+                        o.userData.smokeBalls.forEach(s => {
+                            s.userData.phase += dt * 0.5;
+                            s.position.y = s.userData.baseY + Math.sin(s.userData.phase) * 20;
+                            s.scale.setScalar(1 + Math.sin(s.userData.phase * 0.3) * 0.1);
+                        });
+                    }
+                });
 
                 debrisParts.forEach(d => {
                     d.mesh.position.addScaledVector(d.velocity, dt); d.velocity.y -= 25 * dt; d.mesh.rotateOnAxis(d.rotAxis, d.rotSpeed);
