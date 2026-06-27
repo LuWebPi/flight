@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>Ultimate Flight Simulator V14 - Sky Fortress Edition</title>
+    <title>Ultimate Flight Simulator V15 - Sky Fortress Edition</title>
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; overflow: hidden; background-color: #7ec0ee; font-family: 'Segoe UI', Tahoma, sans-serif; color: white; user-select: none; touch-action: none; }
@@ -228,9 +228,9 @@
     <div id="sound-indicator" style="position:absolute; top:5px; right:200px; color:#00ffcc; font-size:11px; font-weight:bold; text-shadow:1px 1px 2px #000; z-index:10; display:none;">🔇 SOUND OFF</div>
 
     <div id="start-menu">
-        <h1>ULTIMATE FLIGHT SIM V14</h1>
+        <h1>ULTIMATE FLIGHT SIM V15</h1>
         <h2>SKY FORTRESS EDITION</h2>
-        <p>V14: Unendlich Treibstoff (reiner Flugsimulator). Ringe entfernt (kein Spielmodus). Audio zuverlässig fixiert (mehrere Gesten-Listener, Sound-Indicator). Bessere Physik: koordinierte Kurven, Ground Effect, induzierter Widerstand, Prop-Torque, Trim, sanfterer Stall. Bessere Grafik: ACES Tone Mapping, Gradient-Sky-Shader, Hemisphere-Light, höhere Schattenauflösung, Sun-Glow-Sprite.</p>
+        <p>V15: Performance-Boost (weniger Lag). Boden-Glitch gefixt (kein Z-Fighting mehr). Alle Ringe entfernt (nur noch Navigations-Marker). Audio-Fix: expliziter „SOUND AKTIVIEREN“-Button im Startmenü.</p>
         <div class="plane-grid">
             <button class="plane-btn" onclick="startGame('CESSNA')">🛩️ Cessna 172<small>Leicht · Trainer · Stall 45kt</small></button>
             <button class="plane-btn" onclick="startGame('A320')">✈️ Airbus A320neo<small>Verkehrs · Stall 120kt</small></button>
@@ -240,6 +240,7 @@
             <button class="plane-btn" onclick="startGame('HELO')">🚁 Helikopter<small>Rotory · Schweben · VTOL</small></button>
             <button class="plane-btn" onclick="startGame('GLIDER')">🪂 Gleiter<small>Segelflug · Motorlos</small></button>
         </div>
+        <button id="sound-enable-btn" onclick="enableSound()" style="margin-top: 16px; background: rgba(0,255,204,0.15); border: 2px solid #00ffcc; color: #00ffcc; padding: 10px 28px; font-size: 15px; font-weight: bold; border-radius: 10px; cursor: pointer; letter-spacing: 1px;">🔊 SOUND AKTIVIEREN</button>
         <div class="menu-help">
             <b>Tastatur (Desktop):</b> W/S Pitch · A/D Roll · Q/E Ruder · Shift/Ctrl Schub · B Bremsen · F Klappen · V Spoiler · L Fahrwerk · C Kamera · N Tag/Nacht · T Wetter · Y Jahreszeit · P Autopilot · O Smoke · H Photo · J Lichter · Esc Pause · Space Rakete · G Kanone · X Flares · R Neustart<br>
             <b>Mobil:</b> Joystick rechts, Schubregler links, Buttons rechts.
@@ -596,6 +597,25 @@
         // Resume on visibility change (tab refocus)
         document.addEventListener('visibilitychange', () => { if(!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
 
+        // Explicit sound enable button (guaranteed user gesture)
+        function enableSound() {
+            initAudio();
+            if(audioCtx && audioCtx.state === 'suspended') {
+                audioCtx.resume().then(() => {
+                    const btn = document.getElementById('sound-enable-btn');
+                    if(btn) { btn.innerText = '✅ SOUND AN'; btn.style.background = 'rgba(0,255,100,0.3)'; }
+                    const si = document.getElementById('sound-indicator'); if(si) { si.style.display='block'; si.innerText = '🔊 SOUND ON'; }
+                    // Play a test sound
+                    playSound('click');
+                }).catch(()=>{});
+            } else if(audioCtx && audioCtx.state === 'running') {
+                const btn = document.getElementById('sound-enable-btn');
+                if(btn) { btn.innerText = '✅ SOUND AN'; btn.style.background = 'rgba(0,255,100,0.3)'; }
+                playSound('click');
+            }
+        }
+        window.enableSound = enableSound;
+
         function playSound(type) {
             if(!audioCtx) { initAudio(); }
             if(audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
@@ -731,7 +751,13 @@
 
         // --- Start / Reset ---
         function startGame(type) {
-            document.getElementById('audio-hint').style.display = 'block'; initAudio();
+            // CRITICAL: initAudio must be called synchronously in the user gesture (button click)
+            // for browsers to allow AudioContext. This is the most reliable place.
+            initAudio();
+            // Also try to resume immediately (some browsers need it)
+            if(audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
+            const hint = document.getElementById('audio-hint'); if(hint) hint.style.display = 'none';
+            const si = document.getElementById('sound-indicator'); if(si) { si.style.display = 'block'; si.innerText = audioCtx && audioCtx.state === 'running' ? '🔊 SOUND ON' : '🔇 TAP TO ENABLE'; }
             currentPlane = type; stats = planeStats[type];
             document.getElementById('start-menu').style.display = 'none';
             document.getElementById('game-ui').style.display = 'block';
@@ -865,7 +891,7 @@
             camera = new THREE.PerspectiveCamera(65, window.innerWidth / window.innerHeight, 0.1, 40000);
             renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: "high-performance" });
             renderer.setSize(window.innerWidth, window.innerHeight);
-            renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+            renderer.setPixelRatio(1);
             renderer.shadowMap.enabled = true;
             renderer.shadowMap.type = THREE.PCFSoftShadowMap;
             // ACES Filmic tone mapping for cinematic color grading
@@ -886,7 +912,7 @@
             sunLight.shadow.camera.left = -5000; sunLight.shadow.camera.right = 5000;
             sunLight.shadow.camera.top = 5000; sunLight.shadow.camera.bottom = -5000;
             sunLight.shadow.camera.near = 100; sunLight.shadow.camera.far = 10000;
-            sunLight.shadow.mapSize.width = 4096; sunLight.shadow.mapSize.height = 4096;
+            sunLight.shadow.mapSize.width = 2048; sunLight.shadow.mapSize.height = 2048;
             sunLight.shadow.bias = -0.0005;
             scene.add(sunLight);
             moonLight = new THREE.DirectionalLight(0x6688aa, 0.0); moonLight.position.set(-3000, 4000, -2000); scene.add(moonLight);
@@ -929,7 +955,7 @@
         }
 
         function createZonedCity() {
-            const groundGeo = new THREE.PlaneGeometry(48000, 48000, 128, 128);
+            const groundGeo = new THREE.PlaneGeometry(48000, 48000, 200, 200);
             const pos = groundGeo.attributes.position;
             const colors = []; const colorObj = new THREE.Color();
 
@@ -995,7 +1021,7 @@
                     if (x % 1200 === 0 || z % 1200 === 0) {
                         let road = new THREE.Mesh(new THREE.PlaneGeometry(30, 400), new THREE.MeshBasicMaterial({color: 0x333333}));
                         road.rotation.x = -Math.PI/2; if(z % 1200 === 0) road.rotation.z = Math.PI/2;
-                        road.position.set(x + 200, isWater ? 10 : 0.2, z + 200);
+                        road.position.set(x + 200, isWater ? 10 : 1.0, z + 200);
                         scene.add(road);
                         if(isWater) { let pillar = new THREE.Mesh(new THREE.BoxGeometry(10, 20, 10), matInd); pillar.position.set(x + 200, 0, z + 200); scene.add(pillar); }
                     }
@@ -1027,6 +1053,7 @@
                             let tx = x + (Math.random()-0.5)*300; let tz = z + (Math.random()-0.5)*300;
                             if(!isRiver(tx, tz)) {
                                 let treeMesh = new THREE.Mesh(treeGeo, treeMatUse);
+                                treeMesh.castShadow = false; treeMesh.receiveShadow = false;
                                 treeMesh.position.set(tx, 10, tz); cityGroup.add(treeMesh);
                                 let trunk = new THREE.Mesh(treeTrunkGeo, matInd); trunk.position.set(tx, -2, tz); cityGroup.add(trunk);
                                 trees.push({mesh: treeMesh, trunk: trunk});
@@ -1052,7 +1079,7 @@
             const grp = new THREE.Group();
             const rwWidth = 60; const rwLength = 3000;
             const runway = new THREE.Mesh(new THREE.PlaneGeometry(rwWidth, rwLength), matRunway);
-            runway.rotation.x = -Math.PI / 2; runway.position.y = 0.15; grp.add(runway);
+            runway.rotation.x = -Math.PI / 2; runway.position.y = 1.0; grp.add(runway);
             runways.push({ x: cx, z: cz, width: rwWidth, length: rwLength });
             const taxi = new THREE.Mesh(new THREE.PlaneGeometry(30, rwLength), matConcrete);
             taxi.rotation.x = -Math.PI/2; taxi.position.set(cx - 100, 0.15, cz); grp.add(taxi);
@@ -1103,7 +1130,7 @@
             }
 
             // Wind turbines (rotating blades)
-            for(let i=0; i<15; i++) {
+            for(let i=0; i<8; i++) {
                 const angle = Math.random() * Math.PI * 2;
                 const dist = 3000 + Math.random() * 5000;
                 const wx = Math.cos(angle) * dist;
@@ -1188,6 +1215,8 @@
                 grp.add(smoke);
                 if(!grp.userData.smokeBalls) grp.userData.smokeBalls = [];
                 grp.userData.smokeBalls.push(smoke);
+                if(!window._volcanoSmokeBalls) window._volcanoSmokeBalls = [];
+                window._volcanoSmokeBalls.push(smoke);
             }
             grp.position.set(cx, getTerrainHeight(cx, cz), cz);
             scene.add(grp);
@@ -1321,6 +1350,7 @@
         }
 
         function createWaypoints() {
+            // V15: No 3D rings (user wants no rings). Waypoints are navigation only — shown in UI + minimap.
             const wpData = [
                 {name: 'WP1', x: 2000, y: 1500, z: -2000},
                 {name: 'WP2', x: 6000, y: 2000, z: -4000},
@@ -1329,16 +1359,20 @@
                 {name: 'WP5', x: -3000, y: 1500, z: 4000},
             ];
             wpData.forEach(wp => {
-                const ring = new THREE.Mesh(new THREE.TorusGeometry(80, 6, 8, 24), new THREE.MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.8}));
-                ring.position.set(wp.x, wp.y, wp.z);
-                scene.add(ring);
-                waypoints.push({name: wp.name, position: new THREE.Vector3(wp.x, wp.y, wp.z), mesh: ring});
+                // Small marker pole instead of ring (visible but not a "ring")
+                const marker = new THREE.Mesh(
+                    new THREE.CylinderGeometry(2, 2, 60, 6),
+                    new THREE.MeshBasicMaterial({color: 0xffff00, transparent: true, opacity: 0.6})
+                );
+                marker.position.set(wp.x, wp.y - 30, wp.z);
+                scene.add(marker);
+                waypoints.push({name: wp.name, position: new THREE.Vector3(wp.x, wp.y, wp.z), mesh: marker});
             });
         }
 
         function createClouds() {
             const cloudMat = new THREE.MeshLambertMaterial({color: 0xffffff, transparent: true, opacity: 0.85});
-            for(let i=0; i<40; i++) {
+            for(let i=0; i<18; i++) {
                 const cluster = new THREE.Group();
                 const blobs = 5 + Math.floor(Math.random()*5);
                 for(let b=0; b<blobs; b++) {
@@ -1358,7 +1392,7 @@
         function createBirds() {
             const birdMat = new THREE.MeshLambertMaterial({color: 0x222222});
             const wingGeo = new THREE.BoxGeometry(2, 0.1, 0.6);
-            for(let i=0; i<30; i++) {
+            for(let i=0; i<12; i++) {
                 const bird = new THREE.Group();
                 const lw = new THREE.Mesh(wingGeo, birdMat); lw.position.x = -1.2; bird.add(lw);
                 const rw = new THREE.Mesh(wingGeo, birdMat); rw.position.x = 1.2; bird.add(rw);
@@ -1407,13 +1441,13 @@
             const carGeo = new THREE.BoxGeometry(2, 1, 4); const carMat = new THREE.MeshLambertMaterial({color: 0xdddddd});
             const taillightMat = new THREE.MeshBasicMaterial({color: 0xff0000}); const headlightMat = new THREE.MeshBasicMaterial({color: 0xffffcc});
             const colors = [0xcc0000,0x0066cc,0xffffff,0x222222,0x888888,0xddaa00,0x00aa55];
-            for(let i=0; i<180; i++) {
+            for(let i=0; i<70; i++) {
                 const isXAxis = Math.random() > 0.5;
                 const posStr = (Math.floor((Math.random() * 8000) - 4000) / 1200) * 1200;
                 const posRand = (Math.random() * 8000) - 4000;
                 const carGroup = new THREE.Group();
                 const carColor = colors[Math.floor(Math.random()*colors.length)];
-                const carMesh = new THREE.Mesh(carGeo, new THREE.MeshLambertMaterial({color: carColor})); carMesh.position.y = 0.5; carGroup.add(carMesh);
+                const carMesh = new THREE.Mesh(carGeo, new THREE.MeshLambertMaterial({color: carColor})); carMesh.position.y = 0.5; carMesh.castShadow = false; carMesh.receiveShadow = false; carGroup.add(carMesh);
                 const headL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.2), headlightMat); headL.position.set(-0.7, 0.5, -2); carGroup.add(headL);
                 const headR = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.2), headlightMat); headR.position.set(0.7, 0.5, -2); carGroup.add(headR);
                 const tailL = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.5, 0.2), taillightMat); tailL.position.set(-0.7, 0.5, 2); carGroup.add(tailL);
@@ -1864,13 +1898,11 @@
             updateWeatherInd();
             // Rebuild city ground colors (simple: just update ground material color via overlay)
             // For simplicity, overlay a snow plane in winter
-            if(seasonMode === 1 && !window._snowGround) {
-                window._snowGround = new THREE.Mesh(new THREE.PlaneGeometry(48000, 48000), new THREE.MeshLambertMaterial({color: 0xeef4f8, transparent: true, opacity: 0.7}));
-                window._snowGround.rotation.x = -Math.PI/2; window._snowGround.position.y = 0.5; scene.add(window._snowGround);
-                // trees get snow
+            if(seasonMode === 1) {
+                // Winter: change ground color directly (no overlay plane to avoid z-fighting)
+                // Re-tint trees
                 trees.forEach(t => { if(t.mesh) t.mesh.material = matSnow; });
-            } else if(seasonMode === 0 && window._snowGround) {
-                scene.remove(window._snowGround); window._snowGround = null;
+            } else {
                 trees.forEach(t => { if(t.mesh) t.mesh.material = matTree; });
             }
             playSound('click');
@@ -2236,8 +2268,16 @@
             }
             if (physics.position.y > minHeight + 1 && physics.position.y < 1200) {
                 planeBox.setFromObject(planeGroup); planeBox.expandByScalar(-0.5);
+                // Performance: only check collidables within 500 units of plane (skip far ones)
                 for (let i = 0; i < collidables.length; i++) {
-                    if (planeBox.intersectsBox(collidables[i])) { triggerCrash("Kollision mit Objekt!"); break; }
+                    const c = collidables[i];
+                    // Quick distance reject: check if box center is within range
+                    const cx = (c.min.x + c.max.x) * 0.5;
+                    const cz = (c.min.z + c.max.z) * 0.5;
+                    const dx = cx - physics.position.x;
+                    const dz = cz - physics.position.z;
+                    if(dx*dx + dz*dz > 250000) continue; // 500 units squared
+                    if (planeBox.intersectsBox(c)) { triggerCrash("Kollision mit Objekt!"); break; }
                 }
             }
         }
@@ -2606,16 +2646,14 @@
                     carrierGroup.position.x = ud.baseX; carrierGroup.position.z = ud.baseZ;
                     carrierGroup.rotation.y = ud.angle + Math.PI/2;
                 }
-                // Volcano smoke animation
-                scene.traverse(o => {
-                    if(o.userData && o.userData.smokeBalls) {
-                        o.userData.smokeBalls.forEach(s => {
-                            s.userData.phase += dt * 0.5;
-                            s.position.y = s.userData.baseY + Math.sin(s.userData.phase) * 20;
-                            s.scale.setScalar(1 + Math.sin(s.userData.phase * 0.3) * 0.1);
-                        });
-                    }
-                });
+                // Volcano smoke animation (use stored refs, no traverse)
+                if(window._volcanoSmokeBalls) {
+                    window._volcanoSmokeBalls.forEach(s => {
+                        s.userData.phase += dt * 0.5;
+                        s.position.y = s.userData.baseY + Math.sin(s.userData.phase) * 20;
+                        s.scale.setScalar(1 + Math.sin(s.userData.phase * 0.3) * 0.1);
+                    });
+                }
 
                 debrisParts.forEach(d => {
                     d.mesh.position.addScaledVector(d.velocity, dt); d.velocity.y -= 25 * dt; d.mesh.rotateOnAxis(d.rotAxis, d.rotSpeed);
