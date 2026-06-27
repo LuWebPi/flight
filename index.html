@@ -240,7 +240,7 @@
             <button class="plane-btn" onclick="startGame('HELO')">🚁 Helikopter<small>Rotory · Schweben · VTOL</small></button>
             <button class="plane-btn" onclick="startGame('GLIDER')">🪂 Gleiter<small>Segelflug · Motorlos</small></button>
         </div>
-        <button id="sound-enable-btn" onclick="enableSound()" style="margin-top: 16px; background: rgba(0,255,204,0.15); border: 2px solid #00ffcc; color: #00ffcc; padding: 10px 28px; font-size: 15px; font-weight: bold; border-radius: 10px; cursor: pointer; letter-spacing: 1px;">🔊 SOUND AKTIVIEREN</button>
+        <button id="sound-enable-btn" ontouchend="event.preventDefault(); enableSound()" onclick="enableSound()" style="margin-top: 16px; background: rgba(0,255,204,0.15); border: 2px solid #00ffcc; color: #00ffcc; padding: 14px 32px; font-size: 16px; font-weight: bold; border-radius: 12px; cursor: pointer; letter-spacing: 1px; -webkit-tap-highlight-color: transparent;">🔊 HIER TIPPEN FÜR SOUND</button>
         <div class="menu-help">
             <b>Tastatur (Desktop):</b> W/S Pitch · A/D Roll · Q/E Ruder · Shift/Ctrl Schub · B Bremsen · F Klappen · V Spoiler · L Fahrwerk · C Kamera · N Tag/Nacht · T Wetter · Y Jahreszeit · P Autopilot · O Smoke · H Photo · J Lichter · Esc Pause · Space Rakete · G Kanone · X Flares · R Neustart<br>
             <b>Mobil:</b> Joystick rechts, Schubregler links, Buttons rechts.
@@ -554,7 +554,10 @@
             return false;
         }
 
-        // --- Audio System ---
+        // --- Audio System (iOS/Brave-optimized) ---
+        // On iOS (incl. Brave which uses WebKit), AudioContext MUST be created AND unlocked
+        // synchronously inside a user gesture (touchend/click). No Promises, no setTimeout.
+        // The silent-buffer trick unlocks the context reliably on iOS.
         function initAudio() {
             try {
                 const AudioContext = window.AudioContext || window.webkitAudioContext;
@@ -564,16 +567,9 @@
                     masterGain.gain.value = masterVolume;
                     masterGain.connect(audioCtx.destination);
                 }
-                // Always try to resume (browsers suspend until user gesture)
+                // Synchronous resume (no .then — we don't wait)
                 if(audioCtx.state === 'suspended') {
-                    audioCtx.resume().then(() => {
-                        const h=document.getElementById('audio-hint'); if(h) h.style.display='none';
-                        const si=document.getElementById('sound-indicator'); if(si) si.innerText = '🔊 SOUND ON';
-                    }).catch(()=>{});
-                }
-                if(audioCtx.state === 'running') {
-                    const h=document.getElementById('audio-hint'); if(h) h.style.display='none';
-                    const si=document.getElementById('sound-indicator'); if(si) si.innerText = '🔊 SOUND ON';
+                    audioCtx.resume();
                 }
                 if(engineOsc) return;
                 engineOsc = audioCtx.createOscillator(); engineOsc.type = 'sawtooth';
@@ -589,37 +585,66 @@
                 windNoise.start();
             } catch(e) { console.warn('Audio init failed:', e); }
         }
-        // Multiple gesture types to ensure audio unlocks on any platform
-        document.body.addEventListener('click', initAudio, {passive: true});
-        document.body.addEventListener('touchstart', initAudio, {passive: true});
-        document.body.addEventListener('keydown', initAudio, {passive: true});
-        document.addEventListener('pointerdown', initAudio, {passive: true});
+
+        // iOS unlock: play a silent buffer + audible beep synchronously in the gesture.
+        // This is THE reliable way to unlock audio on iPad/iPhone Brave/Safari.
+        function unlockAudio() {
+            try {
+                initAudio();
+                if(!audioCtx) return false;
+                // Silent buffer unlock (iOS specific trick)
+                const silentBuffer = audioCtx.createBuffer(1, 1, audioCtx.sampleRate);
+                const silentSource = audioCtx.createBufferSource();
+                silentSource.buffer = silentBuffer;
+                silentSource.connect(audioCtx.destination);
+                silentSource.start(0);
+                // Resume synchronously
+                if(audioCtx.state === 'suspended') audioCtx.resume();
+                // Audible confirmation beep (will play once context is running)
+                const osc = audioCtx.createOscillator();
+                const gain = audioCtx.createGain();
+                osc.connect(gain); gain.connect(masterGain);
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(660, audioCtx.currentTime);
+                osc.frequency.setValueAtTime(880, audioCtx.currentTime + 0.1);
+                gain.gain.setValueAtTime(0.4, audioCtx.currentTime);
+                gain.gain.exponentialRampToValueAtTime(0.01, audioCtx.currentTime + 0.4);
+                osc.start();
+                osc.stop(audioCtx.currentTime + 0.4);
+                // Update UI
+                const btn = document.getElementById('sound-enable-btn');
+                if(btn) { btn.innerText = '✅ SOUND AN'; btn.style.background = 'rgba(0,255,100,0.3)'; }
+                const si = document.getElementById('sound-indicator');
+                if(si) { si.style.display='block'; si.innerText = '🔊 SOUND ON'; }
+                const hint = document.getElementById('audio-hint');
+                if(hint) hint.style.display = 'none';
+                return true;
+            } catch(e) { console.warn('Audio unlock failed:', e); return false; }
+        }
+        window.unlockAudio = unlockAudio;
+
+        // Gesture listeners — touchend is most reliable on iOS
+        function gestureHandler(e) { initAudio(); }
+        document.body.addEventListener('touchend', gestureHandler, {passive: true});
+        document.body.addEventListener('click', gestureHandler, {passive: true});
+        document.body.addEventListener('keydown', gestureHandler, {passive: true});
+        document.addEventListener('pointerdown', gestureHandler, {passive: true});
         // Resume on visibility change (tab refocus)
         document.addEventListener('visibilitychange', () => { if(!document.hidden && audioCtx && audioCtx.state === 'suspended') audioCtx.resume(); });
 
-        // Explicit sound enable button (guaranteed user gesture)
+        // Explicit sound enable button — calls unlockAudio (synchronous iOS unlock)
         function enableSound() {
-            initAudio();
-            if(audioCtx && audioCtx.state === 'suspended') {
-                audioCtx.resume().then(() => {
-                    const btn = document.getElementById('sound-enable-btn');
-                    if(btn) { btn.innerText = '✅ SOUND AN'; btn.style.background = 'rgba(0,255,100,0.3)'; }
-                    const si = document.getElementById('sound-indicator'); if(si) { si.style.display='block'; si.innerText = '🔊 SOUND ON'; }
-                    // Play a test sound
-                    playSound('click');
-                }).catch(()=>{});
-            } else if(audioCtx && audioCtx.state === 'running') {
-                const btn = document.getElementById('sound-enable-btn');
-                if(btn) { btn.innerText = '✅ SOUND AN'; btn.style.background = 'rgba(0,255,100,0.3)'; }
-                playSound('click');
-            }
+            unlockAudio();
         }
         window.enableSound = enableSound;
 
         function playSound(type) {
+            // Lazy init (synchronous, no wait)
             if(!audioCtx) { initAudio(); }
-            if(audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
-            if(!audioCtx || audioCtx.state !== 'running') return;
+            if(!audioCtx) return;
+            // Try resume but DON'T wait — play anyway (iOS will queue once unlocked)
+            if(audioCtx.state === 'suspended') { audioCtx.resume(); }
+            // Play even if suspended — on iOS the first gesture-unlock makes future sounds audible
             const osc = audioCtx.createOscillator(); const gain = audioCtx.createGain();
             osc.connect(gain); gain.connect(masterGain);
             if (type === 'missile') { osc.type='sawtooth'; osc.frequency.setValueAtTime(300,audioCtx.currentTime); osc.frequency.exponentialRampToValueAtTime(800,audioCtx.currentTime+0.5); gain.gain.setValueAtTime(0.5,audioCtx.currentTime); gain.gain.exponentialRampToValueAtTime(0.01,audioCtx.currentTime+0.5); osc.start(); osc.stop(audioCtx.currentTime+0.5); }
@@ -751,13 +776,9 @@
 
         // --- Start / Reset ---
         function startGame(type) {
-            // CRITICAL: initAudio must be called synchronously in the user gesture (button click)
-            // for browsers to allow AudioContext. This is the most reliable place.
-            initAudio();
-            // Also try to resume immediately (some browsers need it)
-            if(audioCtx && audioCtx.state === 'suspended') { audioCtx.resume(); }
-            const hint = document.getElementById('audio-hint'); if(hint) hint.style.display = 'none';
-            const si = document.getElementById('sound-indicator'); if(si) { si.style.display = 'block'; si.innerText = audioCtx && audioCtx.state === 'running' ? '🔊 SOUND ON' : '🔇 TAP TO ENABLE'; }
+            // CRITICAL for iOS: unlock audio synchronously in the button-click gesture.
+            // unlockAudio plays a silent buffer + audible beep to unlock the context.
+            unlockAudio();
             currentPlane = type; stats = planeStats[type];
             document.getElementById('start-menu').style.display = 'none';
             document.getElementById('game-ui').style.display = 'block';
